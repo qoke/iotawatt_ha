@@ -41,6 +41,8 @@ class IotaWattSensorEntityDescription(SensorEntityDescription):
     """Class describing IotaWatt sensor entities."""
 
     value: Callable | None = None
+    min_value: float | None = None
+    max_value: float | None = None
 
 
 ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
@@ -50,6 +52,8 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.CURRENT,
         entity_registry_enabled_default=False,
+        min_value=-1000.0,
+        max_value=1000.0,
     ),
     "Hz": IotaWattSensorEntityDescription(
         "Hz",
@@ -58,6 +62,8 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         device_class=SensorDeviceClass.FREQUENCY,
         icon="mdi:flash",
         entity_registry_enabled_default=False,
+        min_value=0.0,
+        max_value=1000.0,
     ),
     "PF": IotaWattSensorEntityDescription(
         "PF",
@@ -66,18 +72,24 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         device_class=SensorDeviceClass.POWER_FACTOR,
         value=lambda value: value * 100,
         entity_registry_enabled_default=False,
+        min_value=0.0,
+        max_value=100.0,
     ),
     "Watts": IotaWattSensorEntityDescription(
         "Watts",
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.POWER,
+        min_value=-100000.0,
+        max_value=100000.0,
     ),
     "WattHours": IotaWattSensorEntityDescription(
         "WattHours",
         native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
         state_class=SensorStateClass.TOTAL,
         device_class=SensorDeviceClass.ENERGY,
+        min_value=-1000000.0,
+        max_value=1000000.0,
     ),
     "VA": IotaWattSensorEntityDescription(
         "VA",
@@ -85,6 +97,8 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.APPARENT_POWER,
         entity_registry_enabled_default=False,
+        min_value=-100000.0,
+        max_value=100000.0,
     ),
     "VAR": IotaWattSensorEntityDescription(
         "VAR",
@@ -92,6 +106,8 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:flash",
         entity_registry_enabled_default=False,
+        min_value=-100000.0,
+        max_value=100000.0,
     ),
     "VARh": IotaWattSensorEntityDescription(
         "VARh",
@@ -99,6 +115,8 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:flash",
         entity_registry_enabled_default=False,
+        min_value=-1000000.0,
+        max_value=1000000.0,
     ),
     "Volts": IotaWattSensorEntityDescription(
         "Volts",
@@ -106,6 +124,8 @@ ENTITY_DESCRIPTION_KEY_MAP: dict[str, IotaWattSensorEntityDescription] = {
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.VOLTAGE,
         entity_registry_enabled_default=False,
+        min_value=0.0,
+        max_value=1000.0,
     ),
 }
 
@@ -201,7 +221,10 @@ class IotaWattSensor(CoordinatorEntity[IotawattUpdater], SensorEntity):
         if (begin := self._sensor_data.getBegin()) and (
             last_reset := dt.parse_datetime(begin)
         ):
-            self._attr_last_reset = last_reset
+            if last_reset.timestamp() > 86400:
+                self._attr_last_reset = last_reset
+            else:
+                self._attr_last_reset = None
 
         super()._handle_coordinator_update()
 
@@ -218,7 +241,16 @@ class IotaWattSensor(CoordinatorEntity[IotawattUpdater], SensorEntity):
     @property
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
+        value = self._sensor_data.getValue()
         if func := self.entity_description.value:
-            return func(self._sensor_data.getValue())
+            value = func(value)
 
-        return self._sensor_data.getValue()
+        # Apply limits
+        if self.entity_description.min_value is not None and value < self.entity_description.min_value:
+            _LOGGER.warning(f"Value {value} for {self.name} is below the minimum limit. Marking as unavailable.")
+            return None
+        if self.entity_description.max_value is not None and value > self.entity_description.max_value:
+            _LOGGER.warning(f"Value {value} for {self.name} is above the maximum limit. Marking as unavailable.")
+            return None
+
+        return value
